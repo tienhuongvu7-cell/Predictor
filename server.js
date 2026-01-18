@@ -1,5 +1,7 @@
 const express = require('express');
 const axios = require('axios');
+const fs = require('fs').promises;
+const path = require('path');
 const cors = require('cors');
 
 const app = express();
@@ -12,22 +14,20 @@ app.use(express.json());
 let sunwinData = [];
 let lc79Data = [];
 let patterns = {};
-let learningDatabase = {
-    sunwin: { patterns: [], outcomes: [], streaks: [] },
-    lc79: { patterns: [], outcomes: [], streaks: [] }
-};
+let patternHistory = {};
 let predictionHistory = [];
+let learningDatabase = { sunwin: {}, lc79: {} };
 
 // API Endpoints
 const SUNWIN_API = 'http://180.93.52.196:3001/api/his';
 const LC79_API = 'https://wtxmd52.tele68.com/v1/txmd5/sessions';
 
-// ============ TẢI PATTERNS TRỰC TIẾP ============
+// ============ PATTERNS SẴN TRONG CODE (1000+ patterns) ============
 function loadPatternsDirectly() {
     console.log('📊 Đang tải patterns trực tiếp...');
     
+    // Patterns gốc từ cau.txt
     patterns = {
-        // Patterns gốc từ file của bạn
         "TXXTTXTX": "Xỉu", "XXTTXTXX": "Tài", "XTTXTXXT": "Tài",
         "TTXTXXTT": "Tài", "TXTXXTTT": "Xỉu", "XTXXTTTX": "Tài",
         "TXXTTTXX": "Xỉu", "XXTTTXXT": "Tài", "TTTXXXTT": "Xỉu",
@@ -40,16 +40,12 @@ function loadPatternsDirectly() {
         "XTTXXTXX": "Xỉu", "TTXXTXTX": "Tài", "XXTXXTXT": "Xỉu",
         "TXTTXTXX": "Xỉu", "XTXXTXXT": "Tài", "TTXTTXXT": "Tài",
         "XXTXXTTT": "Xỉu", "TXXTXTTX": "Xỉu", "XTTTXXTX": "Tài",
-        
-        // Thêm nhiều patterns nữa
         "TTTTTTTT": "Xỉu", "XXXXXXXX": "Tài", "TTTTXXXX": "Xỉu",
         "XXXXTTTT": "Tài", "TXTXTXTX": "Tài", "XTXTXTXT": "Xỉu",
-        "TTXXTTXX": "Xỉu", "XXTTXXTT": "Tài", "TXTTXXTX": "Xỉu",
-        "XTTXXTXT": "Tài", "TXXTXXTX": "Xỉu", "XTTXTTXT": "Tài",
-        "TTXTTXXT": "Tài", "XXTXXTTT": "Xỉu", "TXXTXTTX": "Xỉu",
-        "XTTTXXTX": "Tài", "TTTXTTTX": "Xỉu", "XXXTXXXT": "Tài",
-        "TXTXXTXT": "Tài", "XTXTXXTX": "Xỉu", "TTXXTTXX": "Xỉu",
-        "XXTTXXTT": "Tài", "TXXTXXTX": "Xỉu", "XTTXTTXT": "Tài",
+        "TXTTXXTX": "Xỉu", "XTTXXTXT": "Tài", "TXXTXXTX": "Xỉu",
+        "XTTXTTXT": "Tài", "TTXTTXXT": "Tài", "XXTXXTTT": "Xỉu",
+        "TXXTXTTX": "Xỉu", "XTTTXXTX": "Tài", "TTTXTTTX": "Xỉu",
+        "XXXTXXXT": "Tài", "TXTXXTXT": "Tài", "XTXTXXTX": "Xỉu",
         "TXXTTXTX": "Xỉu",
 "XXTTXTXX": "Tài",
 "XTTXTXXT": "Tài",
@@ -5072,302 +5068,363 @@ function loadPatternsDirectly() {
 "XTTXXXTT": "Tài",
 "TTXXXTTT": "Xỉu",
 "TXXXTTTX": "Xỉu"
+        
     };
     
-    // Tạo thêm patterns tự động
-    const generateMorePatterns = () => {
-        const patternKeys = Object.keys(patterns);
-        for (let i = 0; i < 500; i++) {
+    // Tạo thêm 1000+ patterns theo logic thông minh
+    const generateSmartPatterns = () => {
+        const basePatterns = Object.keys(patterns);
+        
+        for (let i = 0; i < 800; i++) {
             let pattern = '';
+            
+            // Tạo pattern có logic
             for (let j = 0; j < 8; j++) {
-                pattern += Math.random() > 0.5 ? 'T' : 'X';
+                if (j === 0) {
+                    pattern += Math.random() > 0.5 ? 'T' : 'X';
+                } else {
+                    // Áp dụng một số quy tắc
+                    const prevChar = pattern[j-1];
+                    const random = Math.random();
+                    
+                    if (random < 0.3) {
+                        // 30% giữ nguyên
+                        pattern += prevChar;
+                    } else if (random < 0.6) {
+                        // 30% đổi
+                        pattern += prevChar === 'T' ? 'X' : 'T';
+                    } else {
+                        // 40% random
+                        pattern += Math.random() > 0.5 ? 'T' : 'X';
+                    }
+                }
             }
             
             if (!patterns[pattern]) {
+                // Logic thông minh để xác định kết quả
                 const taiCount = (pattern.match(/T/g) || []).length;
+                const hasThreeInRow = pattern.includes('TTT') || pattern.includes('XXX');
+                
+                let result;
+                
                 if (taiCount >= 6) {
-                    patterns[pattern] = 'Xỉu';
+                    result = 'Xỉu'; // Nhiều Tài quá -> Xỉu
                 } else if (taiCount <= 2) {
-                    patterns[pattern] = 'Tài';
-                } else if (pattern.includes('TTT')) {
-                    patterns[pattern] = 'Xỉu';
-                } else if (pattern.includes('XXX')) {
-                    patterns[pattern] = 'Tài';
+                    result = 'Tài'; // Nhiều Xỉu quá -> Tài
+                } else if (hasThreeInRow) {
+                    // Có 3 cái liên tiếp -> đảo chiều
+                    if (pattern.includes('TTT')) {
+                        result = 'Xỉu';
+                    } else {
+                        result = 'Tài';
+                    }
+                } else if (pattern.match(/^(TXTX|XTXT)/)) {
+                    // Bắt đầu bằng 1-1 -> theo xu hướng
+                    result = pattern[0] === 'T' ? 'Xỉu' : 'Tài';
                 } else {
-                    patterns[pattern] = Math.random() > 0.5 ? 'Tài' : 'Xỉu';
+                    // Random nhưng có trọng số
+                    result = Math.random() > 0.55 ? 'Tài' : 'Xỉu';
                 }
+                
+                patterns[pattern] = result;
             }
         }
     };
     
-    generateMorePatterns();
+    generateSmartPatterns();
     console.log(`✅ Đã tải ${Object.keys(patterns).length} patterns trực tiếp`);
 }
 
-// ============ THUẬT TOÁN SIÊU MẠNH ============
-class SuperUltimatePredictor {
+// ============ THUẬT TOÁN SIÊU CẤP ============
+class UltimatePredictorPro {
     constructor() {
-        this.algorithmHistory = [];
+        this.algorithmMemory = { sunwin: [], lc79: [] };
         this.learningRate = 0.15;
-        this.streakMemory = {};
+        this.streakDatabase = {
+            sunwin: { continues: 0, breaks: 0, patterns: [] },
+            lc79: { continues: 0, breaks: 0, patterns: [] }
+        };
     }
     
-    // ============ THUẬT TOÁN 1: CẦU NHỊP NGHIÊNG ============
-    analyzeNhịpNghiêng(data, source) {
-        if (!data || data.length < 7) return null;
+    // ============ THUẬT TOÁN 1: PATTERN MATCHING CHÍNH XÁC ============
+    analyzeExactPattern(data, source) {
+        if (!data || data.length < 8) return null;
         
-        const results = data.slice(0, 7).map(item => this.normalizeResult(item, source));
-        
-        // === NHỊP NGHIÊNG 5 (4-1) ===
-        const last5 = results.slice(0, 5);
-        const tai5 = last5.filter(r => r === 'Tài').length;
-        const xiu5 = 5 - tai5;
-        
-        if (tai5 === 4) { // 4 Tài, 1 Xỉu
-            return {
-                prediction: 'Tài',
-                confidence: 0.88,
-                method: 'Nhịp nghiêng 5 (4 Tài, 1 Xỉu) -> Bắt Tài tiếp',
-                type: 'NHIP_NGHIENG_5_TAI',
-                stats: { tai: 4, xiu: 1 }
-            };
-        } else if (xiu5 === 4) { // 4 Xỉu, 1 Tài
-            return {
-                prediction: 'Xỉu',
-                confidence: 0.88,
-                method: 'Nhịp nghiêng 5 (4 Xỉu, 1 Tài) -> Bắt Xỉu tiếp',
-                type: 'NHIP_NGHIENG_5_XIU',
-                stats: { tai: 1, xiu: 4 }
-            };
+        // Tạo pattern theo thứ tự 87654321
+        let patternStr = '';
+        for (let i = 7; i >= 0; i--) {
+            const result = this.normalizeResult(data[i], source);
+            patternStr += result === 'Tài' ? 'T' : 'X';
         }
         
-        // === NHỊP NGHIÊNG 7 (5-2) ===
-        const last7 = results.slice(0, 7);
-        const tai7 = last7.filter(r => r === 'Tài').length;
-        const xiu7 = 7 - tai7;
-        
-        if (tai7 === 5) { // 5 Tài, 2 Xỉu
+        // Chỉ chấp nhận TRÙNG HOÀN TOÀN
+        if (patterns[patternStr]) {
+            // Học từ pattern này
+            this.learnPattern(patternStr, patterns[patternStr], source);
+            
             return {
-                prediction: 'Tài',
-                confidence: 0.92,
-                method: 'Nhịp nghiêng 7 (5 Tài, 2 Xỉu) -> Bắt Tài 2 ván tiếp',
-                type: 'NHIP_NGHIENG_7_TAI',
-                stats: { tai: 5, xiu: 2 }
-            };
-        } else if (xiu7 === 5) { // 5 Xỉu, 2 Tài
-            return {
-                prediction: 'Xỉu',
-                confidence: 0.92,
-                method: 'Nhịp nghiêng 7 (5 Xỉu, 2 Tài) -> Bắt Xỉu 2 ván tiếp',
-                type: 'NHIP_NGHIENG_7_XIU',
-                stats: { tai: 2, xiu: 5 }
+                prediction: patterns[patternStr],
+                confidence: 0.96,
+                method: 'Pattern chính xác',
+                pattern: patternStr,
+                exactMatch: true
             };
         }
         
         return null;
     }
     
-    // ============ THUẬT TOÁN 2: CẦU 3 NHỊP (1-2-1, 3-2-1, 1-2-3) ============
-    analyzeCau3Nhip(data, source) {
+    // ============ THUẬT TOÁN 2: CẦU NHỊP NGHIÊNG (THÊM MỚI) ============
+    analyzeNghiengPattern(data, source) {
+        if (!data || data.length < 7) return null;
+        
+        const recentResults = data.slice(0, 10).map(item => this.normalizeResult(item, source));
+        
+        // === NHỊP NGHIÊNG 5 (4-1) ===
+        if (recentResults.length >= 5) {
+            const last5 = recentResults.slice(0, 5);
+            const taiCount5 = last5.filter(r => r === 'Tài').length;
+            const xiuCount5 = 5 - taiCount5;
+            
+            // Nghiêng Tài 4-1
+            if (taiCount5 === 4 && xiuCount5 === 1) {
+                return {
+                    prediction: 'Tài', // Bắt Tài ván kế tiếp
+                    confidence: 0.88,
+                    method: 'Nhịp nghiêng 5 (4 Tài - 1 Xỉu) → Tài',
+                    type: 'NHIP_NGHIENG_5_TAI'
+                };
+            }
+            
+            // Nghiêng Xỉu 4-1
+            if (xiuCount5 === 4 && taiCount5 === 1) {
+                return {
+                    prediction: 'Xỉu', // Bắt Xỉu ván kế tiếp
+                    confidence: 0.88,
+                    method: 'Nhịp nghiêng 5 (4 Xỉu - 1 Tài) → Xỉu',
+                    type: 'NHIP_NGHIENG_5_XIU'
+                };
+            }
+        }
+        
+        // === NHỊP NGHIÊNG 7 (5-2) ===
+        if (recentResults.length >= 7) {
+            const last7 = recentResults.slice(0, 7);
+            const taiCount7 = last7.filter(r => r === 'Tài').length;
+            const xiuCount7 = 7 - taiCount7;
+            
+            // Nghiêng Tài 5-2
+            if (taiCount7 === 5 && xiuCount7 === 2) {
+                return {
+                    prediction: 'Tài', // Bắt Tài ở 2 ván kế tiếp
+                    confidence: 0.92,
+                    method: 'Nhịp nghiêng 7 (5 Tài - 2 Xỉu) → Tài 2 ván',
+                    type: 'NHIP_NGHIENG_7_TAI'
+                };
+            }
+            
+            // Nghiêng Xỉu 5-2
+            if (xiuCount7 === 5 && taiCount7 === 2) {
+                return {
+                    prediction: 'Xỉu', // Bắt Xỉu ở 2 ván kế tiếp
+                    confidence: 0.92,
+                    method: 'Nhịp nghiêng 7 (5 Xỉu - 2 Tài) → Xỉu 2 ván',
+                    type: 'NHIP_NGHIENG_7_XIU'
+                };
+            }
+        }
+        
+        return null;
+    }
+    
+    // ============ THUẬT TOÁN 3: CẦU 3 NHỊP (THÊM MỚI) ============
+    analyzeThreeRhythm(data, source) {
         if (!data || data.length < 6) return null;
         
-        const results = data.slice(0, 6).map(item => this.normalizeResult(item, source));
-        const pattern6 = results.join('');
+        const recentResults = data.slice(0, 10).map(item => this.normalizeResult(item, source));
+        const resultStr = recentResults.map(r => r === 'Tài' ? 'T' : 'X').join('');
         
         // === NHỊP 1-2-1 ===
-        // 1 Tài - 2 Xỉu - ? -> Tài
-        if (pattern6.startsWith('TXX')) {
-            const nextThree = results.slice(3, 6).join('');
-            if (nextThree === '' || nextThree === 'T' || nextThree === 'TX') {
-                return {
-                    prediction: 'Tài',
-                    confidence: 0.85,
-                    method: 'Cầu 1-2-1 (Tài-Xỉu-Xỉu) -> Tài tiếp',
-                    type: 'NHIP_1_2_1_TAI',
-                    pattern: pattern6.substring(0, 3)
-                };
-            }
-        }
-        
-        // 1 Xỉu - 2 Tài - ? -> Xỉu
-        if (pattern6.startsWith('XTT')) {
-            const nextThree = results.slice(3, 6).join('');
-            if (nextThree === '' || nextThree === 'X' || nextThree === 'XT') {
-                return {
-                    prediction: 'Xỉu',
-                    confidence: 0.85,
-                    method: 'Cầu 1-2-1 (Xỉu-Tài-Tài) -> Xỉu tiếp',
-                    type: 'NHIP_1_2_1_XIU',
-                    pattern: pattern6.substring(0, 3)
-                };
-            }
-        }
-        
-        // === NHỊP 3-2-1 ===
-        // 3 Tài - 2 Xỉu - 1 Tài
-        if (pattern6.startsWith('TTTXX') && results[5] === 'Tài') {
+        // 1 Tài - 2 Xỉu - ... thì nhịp thứ 3 đánh TÀI
+        if (resultStr.startsWith('TXX')) {
             return {
-                prediction: 'Xỉu', // Theo hướng dẫn: đầu tư 2 ván Xỉu và Tài
-                confidence: 0.9,
-                method: 'Cầu 3-2-1 (Tài-Tài-Tài-Xỉu-Xỉu-Tài) -> Xỉu tiếp',
-                type: 'NHIP_3_2_1_TAI',
-                pattern: pattern6
+                prediction: 'Tài',
+                confidence: 0.85,
+                method: 'Nhịp 1-2-1 (T-X-X) → Tài',
+                pattern: 'TXX',
+                type: 'RHYTHM_1_2_1_TAI'
             };
         }
         
-        // 3 Xỉu - 2 Tài - 1 Xỉu
-        if (pattern6.startsWith('XXXTT') && results[5] === 'Xỉu') {
+        // 1 Xỉu - 2 Tài - ... thì nhịp thứ 3 đánh XỈU
+        if (resultStr.startsWith('XTT')) {
             return {
-                prediction: 'Tài', // Đầu tư 2 ván Tài và Xỉu
-                confidence: 0.9,
-                method: 'Cầu 3-2-1 (Xỉu-Xỉu-Xỉu-Tài-Tài-Xỉu) -> Tài tiếp',
-                type: 'NHIP_3_2_1_XIU',
-                pattern: pattern6
+                prediction: 'Xỉu',
+                confidence: 0.85,
+                method: 'Nhịp 1-2-1 (X-T-T) → Xỉu',
+                pattern: 'XTT',
+                type: 'RHYTHM_1_2_1_XIU'
+            };
+        }
+        
+        // === NHỊP 3-2-1 ===
+        // 3 Tài - 2 Xỉu - 1 Tài → đầu tư XỈU và TÀI (ván tiếp theo là Xỉu)
+        if (resultStr.startsWith('TTTXXT') || resultStr.startsWith('TTTXXX')) {
+            return {
+                prediction: 'Xỉu', // Ván tiếp theo là Xỉu
+                confidence: 0.87,
+                method: 'Nhịp 3-2-1 (T-T-T-X-X) → Xỉu',
+                pattern: resultStr.substring(0, 6),
+                type: 'RHYTHM_3_2_1_XIU'
+            };
+        }
+        
+        // 3 Xỉu - 2 Tài - 1 Xỉu → đầu tư TÀI và XỈU (ván tiếp theo là Tài)
+        if (resultStr.startsWith('XXXTTX') || resultStr.startsWith('XXXTTT')) {
+            return {
+                prediction: 'Tài', // Ván tiếp theo là Tài
+                confidence: 0.87,
+                method: 'Nhịp 3-2-1 (X-X-X-T-T) → Tài',
+                pattern: resultStr.substring(0, 6),
+                type: 'RHYTHM_3_2_1_TAI'
             };
         }
         
         // === NHỊP 1-2-3 ===
         // 1 Tài - 2 Xỉu - 3 Tài
-        if (data.length >= 6 && pattern6 === 'TXXTTT') {
+        if (resultStr.startsWith('TXXTTT') || /^TXXT{2,}/.test(resultStr)) {
             return {
                 prediction: 'Tài',
-                confidence: 0.88,
-                method: 'Cầu 1-2-3 (Tài-Xỉu-Xỉu-Tài-Tài-Tài) -> Tài tiếp',
-                type: 'NHIP_1_2_3_TAI',
-                pattern: pattern6
+                confidence: 0.89,
+                method: 'Nhịp 1-2-3 (T-X-X-T-T) → Tài',
+                pattern: resultStr.substring(0, 6),
+                type: 'RHYTHM_1_2_3_TAI'
             };
         }
         
         // 1 Xỉu - 2 Tài - 3 Xỉu
-        if (data.length >= 6 && pattern6 === 'XTTXXX') {
+        if (resultStr.startsWith('XTTXXX') || /^XTTX{2,}/.test(resultStr)) {
             return {
                 prediction: 'Xỉu',
-                confidence: 0.88,
-                method: 'Cầu 1-2-3 (Xỉu-Tài-Tài-Xỉu-Xỉu-Xỉu) -> Xỉu tiếp',
-                type: 'NHIP_1_2_3_XIU',
-                pattern: pattern6
+                confidence: 0.89,
+                method: 'Nhịp 1-2-3 (X-T-T-X-X) → Xỉu',
+                pattern: resultStr.substring(0, 6),
+                type: 'RHYTHM_1_2_3_XIU'
             };
         }
         
         return null;
     }
     
-    // ============ THUẬT TOÁN 3: CẦU ĐẢO ============
-    analyzeCauDao(data, source) {
+    // ============ THUẬT TOÁN 4: CẦU ĐẢO (THÊM MỚI) ============
+    analyzeDaoPattern(data, source) {
         if (!data || data.length < 8) return null;
         
-        const results = data.slice(0, 8).map(item => this.normalizeResult(item, source));
+        const recentResults = data.slice(0, 8).map(item => this.normalizeResult(item, source));
+        const resultStr = recentResults.map(r => r === 'Tài' ? 'T' : 'X').join('');
         
-        // Kiểm tra xem có đang đảo hoàn toàn so với 8 phiên trước không
-        let isFullReverse = true;
-        for (let i = 0; i < Math.min(4, results.length - 4); i++) {
-            const current = results[i];
-            const past = results[i + 4];
-            if (!(current === 'Tài' && past === 'Xỉu') && !(current === 'Xỉu' && past === 'Tài')) {
-                isFullReverse = false;
+        // Kiểm tra cầu đảo (đảo ngược hoàn toàn so với trước đó)
+        // Ví dụ: T X T X T X T X hoặc X T X T X T X T
+        let isPerfectDao = true;
+        for (let i = 0; i < resultStr.length - 1; i++) {
+            if (resultStr[i] === resultStr[i + 1]) {
+                isPerfectDao = false;
                 break;
             }
         }
         
-        if (isFullReverse) {
-            // Cầu đảo -> dự đoán tiếp tục đảo
-            const prediction = results[0] === 'Tài' ? 'Xỉu' : 'Tài';
+        if (isPerfectDao) {
+            // Cầu đảo hoàn hảo -> theo quy tắc "chọn tài trước xỉu sau"
+            // Ván thứ 4 quyết định chiến thắng
+            const prediction = resultStr.length >= 4 && resultStr[3] === 'T' ? 'Tài' : 'Xỉu';
+            
             return {
                 prediction: prediction,
-                confidence: 0.82,
-                method: 'Cầu đảo hoàn toàn -> Tiếp tục đảo',
-                type: 'CAU_DAO',
-                pattern: results.slice(0, 4).join('') + ' vs ' + results.slice(4, 8).join('')
+                confidence: 0.83,
+                method: 'Cầu đảo hoàn hảo (1-1) → ' + (prediction === 'Tài' ? 'Tài trước' : 'Xỉu sau'),
+                pattern: resultStr,
+                type: 'DAO_PERFECT'
             };
         }
         
-        // Kiểm tra cầu đảo 1-1 nhiều lần
-        if (results.length >= 6) {
-            let alternatingCount = 0;
-            for (let i = 0; i < results.length - 1; i++) {
-                if (results[i] !== results[i + 1]) {
-                    alternatingCount++;
-                }
+        // Kiểm tra cầu đảo không hoàn hảo nhưng có xu hướng
+        let daoCount = 0;
+        for (let i = 0; i < resultStr.length - 1; i++) {
+            if (resultStr[i] !== resultStr[i + 1]) {
+                daoCount++;
             }
+        }
+        
+        if (daoCount >= 5) { // 5/7 lần đảo
+            const prediction = resultStr[0] === 'T' ? 'Xỉu' : 'Tài';
             
-            if (alternatingCount >= 5) { // 5/6 lần đổi
-                // Đang đảo nhiều -> tiếp tục đảo
-                const prediction = results[0] === 'Tài' ? 'Xỉu' : 'Tài';
-                return {
-                    prediction: prediction,
-                    confidence: 0.8,
-                    method: `Cầu đảo liên tục (${alternatingCount}/6 lần đổi)`,
-                    type: 'CAU_DAO_LIEN_TUC',
-                    alternatingCount
-                };
-            }
+            return {
+                prediction: prediction,
+                confidence: 0.78,
+                method: `Cầu đảo xu hướng (${daoCount}/7 lần đảo)`,
+                pattern: resultStr.substring(0, 4),
+                type: 'DAO_TREND'
+            };
         }
         
         return null;
     }
     
-    // ============ THUẬT TOÁN 4: CẦU NHẢY CÓC ============
-    analyzeCauNhayCoc(data, source) {
+    // ============ THUẬT TOÁN 5: CẦU NHẢY CÓC (THÊM MỚI) ============
+    analyzeJumpingPattern(data, source) {
         if (!data || data.length < 15) return null;
         
-        const results = data.slice(0, 15).map(item => this.normalizeResult(item, source));
+        const recentResults = data.slice(0, 15).map(item => this.normalizeResult(item, source));
         
-        // Phân tích khoảng cách giữa các lần cùng kết quả
-        const intervals = {
-            Tài: [],
-            Xỉu: []
-        };
+        // Phân tích khoảng cách giữa các lần xuất hiện
+        let taiPositions = [];
+        let xiuPositions = [];
         
-        let lastTaiIndex = -1;
-        let lastXiuIndex = -1;
-        
-        for (let i = 0; i < results.length; i++) {
-            if (results[i] === 'Tài') {
-                if (lastTaiIndex !== -1) {
-                    intervals.Tài.push(i - lastTaiIndex);
-                }
-                lastTaiIndex = i;
+        recentResults.forEach((result, index) => {
+            if (result === 'Tài') {
+                taiPositions.push(index);
             } else {
-                if (lastXiuIndex !== -1) {
-                    intervals.Xỉu.push(i - lastXiuIndex);
+                xiuPositions.push(index);
+            }
+        });
+        
+        // Tính toán xu hướng nhảy cóc
+        if (taiPositions.length >= 5 && xiuPositions.length >= 5) {
+            // Kiểm tra xem có phải nhảy cóc sau 3-5 cửa không
+            let isValidJump = true;
+            let jumpPattern = [];
+            
+            // Phân tích các khoảng cách
+            for (let i = 1; i < taiPositions.length; i++) {
+                const gap = taiPositions[i] - taiPositions[i-1];
+                jumpPattern.push(gap);
+                
+                if (gap < 3 || gap > 6) { // Khoảng cách 3-6 là nhảy cóc
+                    isValidJump = false;
+                    break;
                 }
-                lastXiuIndex = i;
             }
-        }
-        
-        // Tính trung bình khoảng cách
-        const avgTaiInterval = intervals.Tài.length > 0 ? 
-            intervals.Tài.reduce((a, b) => a + b, 0) / intervals.Tài.length : 0;
-        const avgXiuInterval = intervals.Xỉu.length > 0 ? 
-            intervals.Xỉu.reduce((a, b) => a + b, 0) / intervals.Xỉu.length : 0;
-        
-        // Phát hiện cầu nhảy cóc: cứ 3-5 cửa Tài sẽ có 1 cửa Xỉu
-        if (avgTaiInterval >= 3 && avgTaiInterval <= 5) {
-            const lastResult = results[0];
-            const lastTaiPos = results.indexOf('Tài', 1);
             
-            if (lastResult === 'Tài' && lastTaiPos > 0 && lastTaiPos <= 5) {
+            if (isValidJump && jumpPattern.length >= 2) {
+                // Dự đoán dựa trên khoảng cách trung bình
+                const avgGap = jumpPattern.reduce((a, b) => a + b, 0) / jumpPattern.length;
+                const lastGap = jumpPattern[jumpPattern.length - 1];
+                
+                let prediction;
+                if (lastGap >= avgGap) {
+                    // Khoảng cách tăng -> có thể sắp đổi
+                    prediction = recentResults[0] === 'Tài' ? 'Xỉu' : 'Tài';
+                } else {
+                    // Khoảng cách giảm -> tiếp tục
+                    prediction = recentResults[0];
+                }
+                
                 return {
-                    prediction: 'Xỉu',
-                    confidence: 0.83,
-                    method: `Cầu nhảy cóc Tài (trung bình ${avgTaiInterval.toFixed(1)} phiên) -> Xỉu`,
-                    type: 'CAU_NHAY_COC_TAI',
-                    avgInterval: avgTaiInterval.toFixed(1)
-                };
-            }
-        }
-        
-        if (avgXiuInterval >= 3 && avgXiuInterval <= 5) {
-            const lastResult = results[0];
-            const lastXiuPos = results.indexOf('Xỉu', 1);
-            
-            if (lastResult === 'Xỉu' && lastXiuPos > 0 && lastXiuPos <= 5) {
-                return {
-                    prediction: 'Tài',
-                    confidence: 0.83,
-                    method: `Cầu nhảy cóc Xỉu (trung bình ${avgXiuInterval.toFixed(1)} phiên) -> Tài`,
-                    type: 'CAU_NHAY_COC_XIU',
-                    avgInterval: avgXiuInterval.toFixed(1)
+                    prediction: prediction,
+                    confidence: 0.75,
+                    method: `Cầu nhảy cóc (khoảng cách ${lastGap}) → ${prediction}`,
+                    jumpPattern: jumpPattern,
+                    type: 'JUMPING'
                 };
             }
         }
@@ -5375,50 +5432,58 @@ class SuperUltimatePredictor {
         return null;
     }
     
-    // ============ THUẬT TOÁN 5: CẦU BỆT THÔNG MINH (NÂNG CAO) ============
-    analyzeCauBetThongMinh(data, source) {
+    // ============ THUẬT TOÁN 6: CẦU BỆT NÂNG CAO SIÊU CẤP ============
+    analyzeStreakUltimate(data, source) {
         if (!data || data.length < 10) return null;
         
-        const results = data.slice(0, 10).map(item => this.normalizeResult(item, source));
+        const recentResults = data.slice(0, 15).map(item => this.normalizeResult(item, source));
         
-        // Tìm streak hiện tại
+        // === PHÂN TÍCH BỆT CHI TIẾT ===
         let currentStreak = 1;
-        let streakType = results[0];
+        let streakType = recentResults[0];
         
-        for (let i = 1; i < results.length; i++) {
-            if (results[i] === streakType) {
+        for (let i = 1; i < recentResults.length; i++) {
+            if (recentResults[i] === streakType) {
                 currentStreak++;
             } else {
                 break;
             }
         }
         
-        // === PHÂN TÍCH CẦU BỆT THÔNG MINH ===
-        if (currentStreak >= 3) {
-            // Phân tích lịch sử streak để quyết định
-            const shouldContinue = this.analyzeStreakContinuation(data, source, currentStreak, streakType);
+        if (currentStreak >= 2) {
+            // === QUYẾT ĐỊNH THÔNG MINH: BỆT TIẾP HAY BẺ? ===
+            const shouldContinue = this.decideStreakUltimate(data, source, currentStreak, streakType);
             
-            if (shouldContinue.continue) {
+            if (shouldContinue === 'CONTINUE') {
                 // Bệt tiếp
                 return {
                     prediction: streakType,
-                    confidence: shouldContinue.confidence,
-                    method: `Cầu bệt ${streakType} ${currentStreak} tay -> Bệt tiếp (${shouldContinue.reason})`,
-                    type: 'CAU_BET_CONTINUE',
+                    confidence: this.calculateStreakConfidence(currentStreak, 'CONTINUE'),
+                    method: `Bệt ${streakType} ${currentStreak} tay → BỆT TIẾP`,
                     streakLength: currentStreak,
                     decision: 'CONTINUE',
-                    reason: shouldContinue.reason
+                    type: 'STREAK_CONTINUE'
                 };
-            } else {
+            } else if (shouldContinue === 'BREAK') {
                 // Bẻ cầu
                 return {
                     prediction: streakType === 'Tài' ? 'Xỉu' : 'Tài',
-                    confidence: shouldContinue.confidence,
-                    method: `Cầu bệt ${streakType} ${currentStreak} tay -> Bẻ cầu (${shouldContinue.reason})`,
-                    type: 'CAU_BET_BREAK',
+                    confidence: this.calculateStreakConfidence(currentStreak, 'BREAK'),
+                    method: `Bệt ${streakType} ${currentStreak} tay → BẺ ${streakType === 'Tài' ? 'Xỉu' : 'Tài'}`,
                     streakLength: currentStreak,
                     decision: 'BREAK',
-                    reason: shouldContinue.reason
+                    type: 'STREAK_BREAK'
+                };
+            } else if (shouldContinue === 'UNCERTAIN') {
+                // Không chắc -> dựa vào điểm xúc xắc
+                const dicePrediction = this.analyzeDiceForStreak(data[0], source);
+                return {
+                    prediction: dicePrediction,
+                    confidence: 0.65,
+                    method: `Bệt ${currentStreak} tay không rõ → Dựa vào xúc xắc`,
+                    streakLength: currentStreak,
+                    decision: 'DICE_BASED',
+                    type: 'STREAK_UNCERTAIN'
                 };
             }
         }
@@ -5426,8 +5491,12 @@ class SuperUltimatePredictor {
         return null;
     }
     
-    // ============ THUẬT TOÁN 6: PHÂN TÍCH XÚC XẮC SIÊU CHI TIẾT ============
-    analyzeDiceSuperDetailed(diceValues, recentData, source) {
+    // ============ THUẬT TOÁN 7: PHÂN TÍCH XÚC XẮC SIÊU CHI TIẾT ============
+    analyzeDiceUltimate(lastResult, source) {
+        const diceValues = source === 'sunwin' 
+            ? [lastResult.xuc_xac_1, lastResult.xuc_xac_2, lastResult.xuc_xac_3]
+            : lastResult.dices;
+            
         if (!diceValues || diceValues.length !== 3) return null;
         
         const [d1, d2, d3] = diceValues;
@@ -5435,218 +5504,295 @@ class SuperUltimatePredictor {
         const [min, mid, max] = sorted;
         const sum = d1 + d2 + d3;
         
-        const analysis = {
-            predictions: [],
-            totalScore: 0,
-            taiScore: 0,
-            xiuScore: 0
-        };
+        const predictions = [];
         
-        // === LUẬT 1: TỔNG ĐIỂM CƠ BẢN ===
-        if (sum <= 8) {
-            analysis.predictions.push({ pred: 'Tài', conf: 0.9, rule: 'Tổng ≤8' });
-            analysis.taiScore += 0.9;
-        } else if (sum >= 13) {
-            analysis.predictions.push({ pred: 'Xỉu', conf: 0.9, rule: 'Tổng ≥13' });
-            analysis.xiuScore += 0.9;
-        }
-        
-        // === LUẬT 2: 3 CON CHĨA XUỐNG ===
+        // === LUẬT CƠ BẢN MẠNH ===
+        // 1. 3 con chĩa xuống mạnh (≤2-3-4)
         if (max <= 4 && sum <= 9) {
             if (min <= 2 && mid <= 3) {
-                analysis.predictions.push({ pred: 'Tài', conf: 0.95, rule: 'Chĩa xuống mạnh (≤2-3-4)' });
-                analysis.taiScore += 0.95;
+                predictions.push({
+                    pred: 'Tài',
+                    conf: 0.94,
+                    rule: '3 con chĩa xuống mạnh (≤2-3-4)',
+                    priority: 1
+                });
             } else {
-                analysis.predictions.push({ pred: 'Tài', conf: 0.85, rule: 'Chĩa xuống' });
-                analysis.taiScore += 0.85;
+                predictions.push({
+                    pred: 'Tài',
+                    conf: 0.87,
+                    rule: '3 con chĩa xuống',
+                    priority: 2
+                });
             }
         }
         
-        // === LUẬT 3: 3 CON CHĨA LÊN ===
+        // 2. 3 con chĩa lên mạnh (≥4-5-6)
         if (min >= 4 && sum >= 12) {
             if (min >= 5 && mid >= 5) {
-                analysis.predictions.push({ pred: 'Xỉu', conf: 0.95, rule: 'Chĩa lên mạnh (≥5-5-5)' });
-                analysis.xiuScore += 0.95;
+                predictions.push({
+                    pred: 'Xỉu',
+                    conf: 0.95,
+                    rule: '3 con chĩa lên mạnh (≥5-5-5)',
+                    priority: 1
+                });
             } else {
-                analysis.predictions.push({ pred: 'Xỉu', conf: 0.85, rule: 'Chĩa lên' });
-                analysis.xiuScore += 0.85;
+                predictions.push({
+                    pred: 'Xỉu',
+                    conf: 0.88,
+                    rule: '3 con chĩa lên',
+                    priority: 2
+                });
             }
         }
         
-        // === LUẬT 4: 4-4-3 & 5-4-2 ===
-        if (sum === 11) {
-            const diceStr = sorted.join('');
-            if (diceStr === '344') {
-                analysis.predictions.push({ pred: 'Tài', conf: 0.98, rule: '4-4-3 tổng 11 -> Tài tiếp' });
-                analysis.taiScore += 0.98;
-            } else if (diceStr === '245') {
-                analysis.predictions.push({ pred: 'Xỉu', conf: 0.98, rule: '5-4-2 tổng 11 -> Xỉu' });
-                analysis.xiuScore += 0.98;
-            }
+        // === LUẬT ĐẶC BIỆT CỦA BẠN ===
+        // 3. 4-4-3 tổng 11 → Tài tiếp
+        if (sum === 11 && diceValues.filter(x => x === 4).length >= 2 && diceValues.includes(3)) {
+            predictions.push({
+                pred: 'Tài',
+                conf: 0.97,
+                rule: '4-4-3 tổng 11 → TÀI TIẾP',
+                priority: 0 // Ưu tiên cao nhất
+            });
         }
         
-        // === LUẬT 5: SỐ GIỮA ===
-        if (sorted[0] === 3 && sorted[1] === 4 && sorted[2] === 5) {
-            analysis.predictions.push({ pred: 'Tài', conf: 0.75, rule: '3-4-5 -> Tài (theo pattern)' });
-            analysis.taiScore += 0.75;
-        }
-        if (sorted[0] === 4 && sorted[1] === 5 && sorted[2] === 6) {
-            analysis.predictions.push({ pred: 'Xỉu', conf: 0.75, rule: '4-5-6 -> Xỉu (theo pattern)' });
-            analysis.xiuScore += 0.75;
+        // 4. 5-4-2 tổng 11 → Xỉu
+        if (sum === 11 && diceValues.includes(5) && diceValues.includes(4) && diceValues.includes(2)) {
+            predictions.push({
+                pred: 'Xỉu',
+                conf: 0.97,
+                rule: '5-4-2 tổng 11 → XỈU',
+                priority: 0
+            });
         }
         
-        // === LUẬT 6: ĐỐI XỨNG ===
+        // 5. Số giữa (3-4-5, 4-5-6) → phân tích pattern
+        if ((sorted[0]===3&&sorted[1]===4&&sorted[2]===5) || (sorted[0]===4&&sorted[1]===5&&sorted[2]===6)) {
+            predictions.push({
+                pred: sum <= 10 ? 'Tài' : 'Xỉu', // Theo tổng điểm
+                conf: 0.82,
+                rule: `Số giữa ${sorted.join('-')} tổng ${sum}`,
+                priority: 2
+            });
+        }
+        
+        // 6. Đối xứng (1-6-1, 2-5-2, 3-4-3)
         if (d1 === d3) {
             const middle = d2;
-            if (middle > d1) {
-                analysis.predictions.push({ 
-                    pred: sum <= 10 ? 'Tài' : 'Xỉu', 
-                    conf: 0.8, 
-                    rule: `Đối xứng ${d1}-${d2}-${d1} (số giữa lớn)` 
+            if (Math.abs(d1 - middle) >= 3) { // Chênh lệch lớn
+                predictions.push({
+                    pred: sum <= 10 ? 'Tài' : 'Xỉu',
+                    conf: 0.85,
+                    rule: `Đối xứng ${d1}-${middle}-${d1} (chênh ${Math.abs(d1-middle)})`,
+                    priority: 2
                 });
-                if (sum <= 10) analysis.taiScore += 0.8;
-                else analysis.xiuScore += 0.8;
             }
         }
         
-        // === LUẬT 7: CẶP ĐÔI ===
+        // 7. Cặp đôi (1-1-6, 2-2-5, 3-3-4, 4-4-3, 5-5-2, 6-6-1)
         if (d1 === d2 || d2 === d3 || d1 === d3) {
             const pairValue = d1 === d2 ? d1 : d2 === d3 ? d2 : d1;
             const singleValue = d1 === d2 ? d3 : d2 === d3 ? d1 : d2;
             
             if (pairValue <= 3 && singleValue >= 4) {
-                analysis.predictions.push({ pred: 'Tài', conf: 0.82, rule: `Cặp ${pairValue}-${pairValue} + ${singleValue}` });
-                analysis.taiScore += 0.82;
+                predictions.push({
+                    pred: 'Tài',
+                    conf: 0.88,
+                    rule: `Cặp số nhỏ ${pairValue}-${pairValue} + số lớn ${singleValue}`,
+                    priority: 2
+                });
             } else if (pairValue >= 4 && singleValue <= 3) {
-                analysis.predictions.push({ pred: 'Xỉu', conf: 0.82, rule: `Cặp ${pairValue}-${pairValue} + ${singleValue}` });
-                analysis.xiuScore += 0.82;
+                predictions.push({
+                    pred: 'Xỉu',
+                    conf: 0.88,
+                    rule: `Cặp số lớn ${pairValue}-${pairValue} + số nhỏ ${singleValue}`,
+                    priority: 2
+                });
             }
         }
         
-        if (analysis.predictions.length === 0) return null;
+        // 8. Tổng điểm đặc biệt
+        if (sum <= 7) {
+            predictions.push({
+                pred: 'Tài',
+                conf: 0.91,
+                rule: `Tổng rất thấp (${sum} ≤ 7) → Tài mạnh`,
+                priority: 1
+            });
+        } else if (sum >= 15) {
+            predictions.push({
+                pred: 'Xỉu',
+                conf: 0.91,
+                rule: `Tổng rất cao (${sum} ≥ 15) → Xỉu mạnh`,
+                priority: 1
+            });
+        } else if (sum === 10 || sum === 11) {
+            // Tổng trung bình -> phân tích chi tiết
+            const evenCount = diceValues.filter(d => d % 2 === 0).length;
+            const oddCount = 3 - evenCount;
+            
+            if (evenCount >= 2) {
+                predictions.push({
+                    pred: 'Xỉu',
+                    conf: 0.68,
+                    rule: `Tổng ${sum}, ${evenCount} số chẵn → Xỉu`,
+                    priority: 3
+                });
+            } else {
+                predictions.push({
+                    pred: 'Tài',
+                    conf: 0.68,
+                    rule: `Tổng ${sum}, ${oddCount} số lẻ → Tài`,
+                    priority: 3
+                });
+            }
+        }
         
-        // Quyết định cuối cùng
-        const finalPrediction = analysis.taiScore > analysis.xiuScore ? 'Tài' : 'Xỉu';
-        const confidence = analysis.taiScore > analysis.xiuScore ? 
-            (analysis.taiScore / (analysis.taiScore + analysis.xiuScore)) * 0.9 :
-            (analysis.xiuScore / (analysis.taiScore + analysis.xiuScore)) * 0.9;
+        if (predictions.length === 0) return null;
+        
+        // Sắp xếp: priority cao nhất, confidence cao nhất
+        predictions.sort((a, b) => {
+            if (a.priority !== b.priority) return a.priority - b.priority;
+            return b.conf - a.conf;
+        });
+        
+        const bestPred = predictions[0];
         
         return {
-            prediction: finalPrediction,
-            confidence: Math.min(0.95, confidence),
-            method: `Phân tích xúc xắc chi tiết (${analysis.predictions.length} luật)`,
-            type: 'DICE_ANALYSIS',
-            rulesApplied: analysis.predictions.map(p => p.rule),
-            score: { tai: analysis.taiScore.toFixed(2), xiu: analysis.xiuScore.toFixed(2) }
+            prediction: bestPred.pred,
+            confidence: bestPred.conf,
+            method: `Xúc xắc: ${bestPred.rule}`,
+            diceAnalysis: {
+                values: diceValues,
+                sum: sum,
+                rulesApplied: predictions.length
+            },
+            type: 'DICE_ANALYSIS'
         };
     }
     
-    // ============ THUẬT TOÁN 7: HỌC TẬP TỪ LỊCH SỬ ============
-    learnFromHistoryAdvanced(data, source) {
-        if (!data || data.length < 30) return null;
+    // ============ THUẬT TOÁN 8: HỌC TẬP MẠNH MẼ ============
+    analyzeLearning(data, source) {
+        if (!data || data.length < 20) return null;
         
-        const results = data.slice(0, 30).map(item => this.normalizeResult(item, source));
-        const recentPatterns = this.extractPatternsFromHistory(results);
+        const recentResults = data.slice(0, 20).map(item => this.normalizeResult(item, source));
+        const recentPatterns = [];
         
-        // Phân tích xu hướng
-        const trends = this.analyzeTrendsFromPatterns(recentPatterns);
+        // Tạo patterns từ lịch sử
+        for (let i = 7; i < recentResults.length; i++) {
+            const pattern = recentResults.slice(i-7, i+1).map(r => r === 'Tài' ? 'T' : 'X').join('');
+            recentPatterns.push(pattern);
+        }
         
-        if (trends.strongTrend) {
+        // Tìm pattern phổ biến
+        const patternCounts = {};
+        recentPatterns.forEach(pattern => {
+            patternCounts[pattern] = (patternCounts[pattern] || 0) + 1;
+        });
+        
+        let mostCommonPattern = null;
+        let maxCount = 0;
+        
+        for (const [pattern, count] of Object.entries(patternCounts)) {
+            if (count > maxCount && pattern.length === 8) {
+                maxCount = count;
+                mostCommonPattern = pattern;
+            }
+        }
+        
+        if (mostCommonPattern && maxCount >= 2) {
+            // Dự đoán dựa trên pattern phổ biến
+            const lastChar = mostCommonPattern[7]; // Ký tự cuối (gần nhất)
+            const prediction = lastChar === 'T' ? 'Tài' : 'Xỉu';
+            
             return {
-                prediction: trends.prediction,
-                confidence: trends.confidence,
-                method: `Học từ lịch sử: ${trends.reason}`,
-                type: 'LEARNING_ADVANCED',
-                patternsAnalyzed: recentPatterns.length,
-                trendStrength: trends.strength
+                prediction: prediction,
+                confidence: Math.min(0.85, 0.7 + (maxCount * 0.05)),
+                method: `Học tập: Pattern "${mostCommonPattern}" xuất hiện ${maxCount} lần`,
+                learnedPattern: mostCommonPattern,
+                frequency: maxCount,
+                type: 'LEARNING_PATTERN'
+            };
+        }
+        
+        // Phân tích xu hướng tổng hợp từ học tập
+        const taiRate = recentResults.filter(r => r === 'Tài').length / recentResults.length;
+        
+        if (taiRate >= 0.7) {
+            return {
+                prediction: 'Xỉu',
+                confidence: 0.8 + (taiRate - 0.7) * 0.5,
+                method: `Học tập: ${Math.round(taiRate*100)}% Tài gần đây → Xỉu`,
+                taiRate: taiRate,
+                type: 'LEARNING_TAI_BIAS'
+            };
+        } else if (taiRate <= 0.3) {
+            return {
+                prediction: 'Tài',
+                confidence: 0.8 + (0.3 - taiRate) * 0.5,
+                method: `Học tập: ${Math.round((1-taiRate)*100)}% Xỉu gần đây → Tài`,
+                taiRate: taiRate,
+                type: 'LEARNING_XIU_BIAS'
             };
         }
         
         return null;
     }
     
-    // ============ THUẬT TOÁN 8: PATTERN MATCHING CHÍNH XÁC ============
-    analyzeExactPattern(data, source) {
-        if (!data || data.length < 8) return null;
-        
-        // Tạo pattern theo thứ tự 87654321
-        let patternStr = '';
-        for (let i = 7; i >= 0; i--) {
-            const item = data[i];
-            const result = this.normalizeResult(item, source);
-            patternStr += result === 'Tài' ? 'T' : 'X';
-        }
-        
-        if (patterns[patternStr]) {
-            return {
-                prediction: patterns[patternStr],
-                confidence: 0.96,
-                method: 'Pattern chính xác (8/8 trùng)',
-                type: 'PATTERN_EXACT',
-                pattern: patternStr
-            };
-        }
-        
-        return null;
-    }
-    
-    // ============ THUẬT TOÁN 9: PHÂN TÍCH XU HƯỚNG TỔNG HỢP ============
+    // ============ THUẬT TOÁN 9: TỔNG HỢP XU HƯỚNG ĐA CHIỀU ============
     analyzeCompositeTrend(data, source) {
         if (!data || data.length < 12) return null;
         
-        const results = data.slice(0, 12).map(item => this.normalizeResult(item, source));
+        const recentResults = data.slice(0, 12).map(item => this.normalizeResult(item, source));
         
-        // Tính nhiều chỉ số
+        // Tính các chỉ số
         const indicators = {
-            taiCount: results.filter(r => r === 'Tài').length,
-            recentTai: results.slice(0, 6).filter(r => r === 'Tài').length,
+            taiCount: recentResults.filter(r => r === 'Tài').length,
+            xiuCount: 12 - recentResults.filter(r => r === 'Tài').length,
+            streakLength: this.getCurrentStreakLength(recentResults),
             changeFrequency: 0,
-            maxStreak: 1,
-            balanceScore: 0
+            recentBias: 0
         };
         
         // Tính tần suất thay đổi
-        for (let i = 0; i < results.length - 1; i++) {
-            if (results[i] !== results[i + 1]) {
+        for (let i = 0; i < recentResults.length - 1; i++) {
+            if (recentResults[i] !== recentResults[i + 1]) {
                 indicators.changeFrequency++;
             }
         }
         
-        // Tìm streak dài nhất
-        let currentStreak = 1;
-        for (let i = 1; i < results.length; i++) {
-            if (results[i] === results[i - 1]) {
-                currentStreak++;
-                indicators.maxStreak = Math.max(indicators.maxStreak, currentStreak);
-            } else {
-                currentStreak = 1;
-            }
-        }
+        // Tính bias gần đây (5 phiên cuối)
+        const recent5 = recentResults.slice(0, 5);
+        indicators.recentBias = recent5.filter(r => r === 'Tài').length - recent5.filter(r => r === 'Xỉu').length;
         
-        // Tính điểm cân bằng
-        indicators.balanceScore = Math.abs(indicators.taiCount - (12 - indicators.taiCount));
-        
-        // Phân tích dựa trên chỉ số
+        // Phân tích xu hướng
         let prediction = null;
         let confidence = 0;
         let method = '';
         
-        if (indicators.maxStreak >= 5) {
-            prediction = results[0] === 'Tài' ? 'Xỉu' : 'Tài';
+        // Rule 1: Streak dài -> khả năng bẻ cao
+        if (indicators.streakLength >= 3) {
+            prediction = recentResults[0] === 'Tài' ? 'Xỉu' : 'Tài';
+            confidence = Math.min(0.88, 0.7 + (indicators.streakLength * 0.06));
+            method = `Xu hướng: Streak ${indicators.streakLength} tay → Bẻ`;
+        }
+        // Rule 2: Đổi nhiều -> tiếp tục đổi
+        else if (indicators.changeFrequency >= 8) {
+            prediction = recentResults[0] === 'Tài' ? 'Xỉu' : 'Tài';
+            confidence = 0.82;
+            method = `Xu hướng: Đổi ${indicators.changeFrequency}/11 lần → Đổi tiếp`;
+        }
+        // Rule 3: Nghiêng rõ -> đảo chiều
+        else if (Math.abs(indicators.taiCount - indicators.xiuCount) >= 4) {
+            prediction = indicators.taiCount > indicators.xiuCount ? 'Xỉu' : 'Tài';
             confidence = 0.85;
-            method = `Xu hướng tổng hợp: Streak dài ${indicators.maxStreak} tay`;
-        } else if (indicators.changeFrequency >= 8) {
-            prediction = results[0] === 'Tài' ? 'Xỉu' : 'Tài';
+            method = `Xu hướng: Nghiêng ${Math.abs(indicators.taiCount - indicators.xiuCount)} phiên → Đảo`;
+        }
+        // Rule 4: Bias gần đây mạnh
+        else if (Math.abs(indicators.recentBias) >= 3) {
+            prediction = indicators.recentBias > 0 ? 'Xỉu' : 'Tài';
             confidence = 0.8;
-            method = `Xu hướng tổng hợp: Đổi ${indicators.changeFrequency}/11 lần`;
-        } else if (indicators.taiCount >= 9) {
-            prediction = 'Xỉu';
-            confidence = 0.82;
-            method = `Xu hướng tổng hợp: ${indicators.taiCount}/12 là Tài`;
-        } else if (indicators.taiCount <= 3) {
-            prediction = 'Tài';
-            confidence = 0.82;
-            method = `Xu hướng tổng hợp: ${12 - indicators.taiCount}/12 là Xỉu`;
+            method = `Xu hướng: Bias ${indicators.recentBias} trong 5 phiên gần nhất`;
         }
         
         if (prediction) {
@@ -5654,158 +5800,16 @@ class SuperUltimatePredictor {
                 prediction,
                 confidence,
                 method,
-                type: 'COMPOSITE_TREND',
-                indicators
+                indicators,
+                type: 'COMPOSITE_TREND'
             };
         }
         
         return null;
     }
     
-    // ============ THUẬT TOÁN 10: QUYẾT ĐỊNH CUỐI CÙNG ============
-    analyzeStreakContinuation(data, source, currentStreak, streakType) {
-        if (!data || data.length < 20) {
-            // Fallback logic khi ít dữ liệu
-            if (currentStreak <= 3) {
-                return { continue: true, confidence: 0.7, reason: 'Streak ngắn, tiếp tục' };
-            } else if (currentStreak <= 5) {
-                return { continue: Math.random() > 0.5, confidence: 0.65, reason: 'Streak trung bình' };
-            } else {
-                return { continue: false, confidence: 0.75, reason: 'Streak dài, bẻ cầu' };
-            }
-        }
-        
-        const results = data.slice(0, 20).map(item => this.normalizeResult(item, source));
-        
-        // Phân tích lịch sử các streak tương tự
-        let continueCount = 0;
-        let breakCount = 0;
-        
-        for (let i = 0; i <= results.length - currentStreak - 1; i++) {
-            // Kiểm tra xem có streak độ dài currentStreak tại vị trí i không
-            let isStreak = true;
-            for (let j = 0; j < currentStreak; j++) {
-                if (results[i + j] !== streakType) {
-                    isStreak = false;
-                    break;
-                }
-            }
-            
-            if (isStreak) {
-                // Kiểm tra kết quả tiếp theo
-                if (i + currentStreak < results.length) {
-                    if (results[i + currentStreak] === streakType) {
-                        continueCount++;
-                    } else {
-                        breakCount++;
-                    }
-                }
-            }
-        }
-        
-        // Quyết định dựa trên thống kê và logic
-        const total = continueCount + breakCount;
-        let decision, confidence, reason;
-        
-        if (total > 0) {
-            const continueRate = continueCount / total;
-            
-            if (currentStreak === 2) {
-                decision = continueRate > 0.3;
-                confidence = 0.7;
-                reason = `Lịch sử: ${Math.round(continueRate * 100)}% tiếp tục`;
-            } else if (currentStreak === 3) {
-                decision = continueRate > 0.4;
-                confidence = 0.72;
-                reason = `Lịch sử: ${Math.round(continueRate * 100)}% tiếp tục`;
-            } else if (currentStreak === 4) {
-                decision = continueRate > 0.5;
-                confidence = 0.75;
-                reason = `Lịch sử: ${Math.round(continueRate * 100)}% tiếp tục`;
-            } else if (currentStreak >= 5) {
-                decision = continueRate > 0.6;
-                confidence = 0.78;
-                reason = `Lịch sử: ${Math.round(continueRate * 100)}% tiếp tục`;
-            } else {
-                decision = continueRate > 0.5;
-                confidence = 0.7;
-                reason = `Lịch sử: ${Math.round(continueRate * 100)}% tiếp tục`;
-            }
-        } else {
-            // Không có lịch sử -> dùng logic mặc định
-            if (currentStreak <= 3) {
-                decision = true;
-                confidence = 0.68;
-                reason = 'Streak ngắn, mặc định tiếp tục';
-            } else if (currentStreak <= 6) {
-                decision = Math.random() > 0.5;
-                confidence = 0.65;
-                reason = 'Streak trung bình, random';
-            } else {
-                decision = false;
-                confidence = 0.8;
-                reason = 'Streak dài, mặc định bẻ';
-            }
-        }
-        
-        return {
-            continue: decision,
-            confidence: Math.min(0.95, confidence),
-            reason: reason
-        };
-    }
-    
-    // ============ HELPER FUNCTIONS ============
-    normalizeResult(item, source) {
-        const result = source === 'sunwin' ? item.ket_qua : item.resultTruyenThong;
-        return result === 'TAI' || result.includes('TÀI') || result === 'Tài' ? 'Tài' : 'Xỉu';
-    }
-    
-    extractPatternsFromHistory(results) {
-        const patterns = [];
-        for (let i = 0; i <= results.length - 8; i++) {
-            const pattern = results.slice(i, i + 8).join('');
-            patterns.push(pattern);
-        }
-        return patterns;
-    }
-    
-    analyzeTrendsFromPatterns(patterns) {
-        if (patterns.length === 0) return { strongTrend: false };
-        
-        // Phân tích tần suất các pattern
-        const patternCounts = {};
-        patterns.forEach(p => {
-            patternCounts[p] = (patternCounts[p] || 0) + 1;
-        });
-        
-        // Tìm pattern phổ biến nhất
-        let maxCount = 0;
-        let mostCommonPattern = '';
-        for (const [pattern, count] of Object.entries(patternCounts)) {
-            if (count > maxCount) {
-                maxCount = count;
-                mostCommonPattern = pattern;
-            }
-        }
-        
-        // Nếu có pattern xuất hiện nhiều lần
-        if (maxCount >= 3 && mostCommonPattern.length === 8) {
-            const nextResult = patterns[mostCommonPattern] || 'Tài'; // Fallback
-            return {
-                strongTrend: true,
-                prediction: nextResult === 'T' ? 'Tài' : 'Xỉu',
-                confidence: Math.min(0.9, 0.7 + (maxCount * 0.05)),
-                reason: `Pattern "${mostCommonPattern}" xuất hiện ${maxCount} lần`,
-                strength: maxCount >= 5 ? 'RẤT MẠNH' : maxCount >= 3 ? 'MẠNH' : 'TRUNG BÌNH'
-            };
-        }
-        
-        return { strongTrend: false };
-    }
-    
-    // ============ TỔNG HỢP TẤT CẢ THUẬT TOÁN ============
-    predictUltimate(data, source) {
+    // ============ TỔNG HỢP CUỐI CÙNG ============
+    predictUltimatePro(data, source) {
         if (!data || data.length < 8) {
             return {
                 success: false,
@@ -5815,36 +5819,31 @@ class SuperUltimatePredictor {
         
         const lastResult = data[0];
         const nextPhien = source === 'sunwin' ? lastResult.phien + 1 : lastResult.id + 1;
-        const diceValues = source === 'sunwin' 
-            ? [lastResult.xuc_xac_1, lastResult.xuc_xac_2, lastResult.xuc_xac_3]
-            : lastResult.dices;
         
-        // CHẠY TẤT CẢ 10 THUẬT TOÁN
+        // CHẠY TẤT CẢ 9 THUẬT TOÁN
         const algorithms = [
-            this.analyzeExactPattern(data, source),               // 1. Pattern chính xác
-            this.analyzeNhịpNghiêng(data, source),                // 2. Cầu nhịp nghiêng
-            this.analyzeCau3Nhip(data, source),                   // 3. Cầu 3 nhịp
-            this.analyzeCauDao(data, source),                     // 4. Cầu đảo
-            this.analyzeCauNhayCoc(data, source),                 // 5. Cầu nhảy cóc
-            this.analyzeCauBetThongMinh(data, source),            // 6. Cầu bệt thông minh
-            this.analyzeDiceSuperDetailed(diceValues, data, source), // 7. Phân tích xúc xắc
-            this.learnFromHistoryAdvanced(data, source),          // 8. Học từ lịch sử
-            this.analyzeCompositeTrend(data, source),             // 9. Xu hướng tổng hợp
+            this.analyzeExactPattern(data, source),          // 1. Pattern chính xác
+            this.analyzeNghiengPattern(data, source),        // 2. Cầu nhịp nghiêng (MỚI)
+            this.analyzeThreeRhythm(data, source),           // 3. Cầu 3 nhịp (MỚI)
+            this.analyzeDaoPattern(data, source),            // 4. Cầu đảo (MỚI)
+            this.analyzeJumpingPattern(data, source),        // 5. Cầu nhảy cóc (MỚI)
+            this.analyzeStreakUltimate(data, source),        // 6. Cầu bệt nâng cao
+            this.analyzeDiceUltimate(lastResult, source),    // 7. Phân tích xúc xắc
+            this.analyzeLearning(data, source),              // 8. Học tập
+            this.analyzeCompositeTrend(data, source)         // 9. Xu hướng tổng hợp
         ].filter(p => p !== null);
         
-        // Thêm fallback nếu ít thuật toán
-        if (algorithms.length < 4) {
+        // Đảm bảo có ít nhất 3 thuật toán
+        if (algorithms.length < 3) {
             const fallback = this.createSmartFallback(data, source);
             if (fallback) algorithms.push(fallback);
         }
         
         // TÍNH KẾT QUẢ CUỐI CÙNG
         const finalResult = this.calculateFinalResult(algorithms);
+        const scoreAnalysis = this.calculateScoreAnalysis(algorithms, finalResult.prediction);
         
-        // TÍNH ĐIỂM SỐ CHI TIẾT
-        const scoreAnalysis = this.calculateDetailedScore(algorithms, finalResult.prediction);
-        
-        // TẠO RESPONSE
+        // TẠO RESPONSE CHUẨN
         return {
             success: true,
             data: {
@@ -5866,15 +5865,89 @@ class SuperUltimatePredictor {
                 du_doan: finalResult.prediction,
                 do_tin_cay: finalResult.confidence + '%',
                 do_manh: finalResult.strength,
-                phuong_phap: finalResult.methods.join(' | '),
+                phuong_phap: finalResult.methods.slice(0, 3).join(' | '),
                 thong_tin_bo_sung: {
                     thuat_toan_su_dung: algorithms.length,
                     patterns_da_tai: Object.keys(patterns).length,
                     diem_so: scoreAnalysis,
-                    xuc_xac_cuoi: diceValues
+                    xuc_xac_cuoi: source === 'sunwin' 
+                        ? [lastResult.xuc_xac_1, lastResult.xuc_xac_2, lastResult.xuc_xac_3]
+                        : lastResult.dices
                 }
             }
         };
+    }
+    
+    // ============ HELPER FUNCTIONS ============
+    decideStreakUltimate(data, source, streakLength, streakType) {
+        if (streakLength >= 8) return 'BREAK'; // Bệt quá dài -> chắc chắn bẻ
+        if (streakLength <= 2) return 'CONTINUE'; // Bệt ngắn -> tiếp tục
+        
+        const recentResults = data.slice(0, 20).map(item => this.normalizeResult(item, source));
+        
+        // Phân tích lịch sử streak
+        let continueCount = 0;
+        let breakCount = 0;
+        
+        for (let i = 0; i < recentResults.length - streakLength - 1; i++) {
+            let isCurrentStreak = true;
+            for (let j = 0; j < streakLength; j++) {
+                if (recentResults[i + j] !== recentResults[i]) {
+                    isCurrentStreak = false;
+                    break;
+                }
+            }
+            
+            if (isCurrentStreak) {
+                if (recentResults[i + streakLength] === recentResults[i]) {
+                    continueCount++;
+                } else {
+                    breakCount++;
+                }
+            }
+        }
+        
+        // Quyết định thông minh
+        if (continueCount + breakCount > 0) {
+            const continueProbability = continueCount / (continueCount + breakCount);
+            
+            if (streakLength === 3) {
+                return continueProbability > 0.6 ? 'CONTINUE' : 'BREAK';
+            } else if (streakLength === 4) {
+                return continueProbability > 0.5 ? 'CONTINUE' : 'BREAK';
+            } else if (streakLength === 5) {
+                return continueProbability > 0.4 ? 'CONTINUE' : 'BREAK';
+            } else if (streakLength === 6) {
+                return continueProbability > 0.3 ? 'CONTINUE' : 'BREAK';
+            } else if (streakLength === 7) {
+                return continueProbability > 0.2 ? 'CONTINUE' : 'BREAK';
+            }
+        }
+        
+        // Quy tắc mặc định
+        if (streakLength <= 3) return 'CONTINUE';
+        if (streakLength <= 5) return Math.random() > 0.5 ? 'CONTINUE' : 'BREAK';
+        return 'BREAK';
+    }
+    
+    calculateStreakConfidence(streakLength, decision) {
+        if (decision === 'CONTINUE') {
+            if (streakLength <= 3) return 0.85;
+            if (streakLength <= 5) return 0.75;
+            return 0.65;
+        } else {
+            if (streakLength >= 6) return 0.9;
+            if (streakLength >= 4) return 0.8;
+            return 0.7;
+        }
+    }
+    
+    analyzeDiceForStreak(lastResult, source) {
+        const diceValues = source === 'sunwin' 
+            ? [lastResult.xuc_xac_1, lastResult.xuc_xac_2, lastResult.xuc_xac_3]
+            : lastResult.dices;
+        const sum = diceValues.reduce((a, b) => a + b, 0);
+        return sum <= 10 ? 'Tài' : 'Xỉu';
     }
     
     calculateFinalResult(algorithms) {
@@ -5883,55 +5956,53 @@ class SuperUltimatePredictor {
                 prediction: Math.random() > 0.5 ? 'Tài' : 'Xỉu',
                 confidence: 50,
                 strength: 'YẾU',
-                methods: ['Dự đoán cơ bản']
+                methods: ['Không có thuật toán nào hoạt động']
             };
         }
         
-        // Tính phiếu bầu có trọng số
-        let taiVotes = 0;
-        let xiuVotes = 0;
+        // Tính điểm có trọng số
+        let taiScore = 0;
+        let xiuScore = 0;
         const methods = [];
         
         algorithms.forEach(algo => {
             const weight = algo.confidence;
             
             if (algo.prediction === 'Tài') {
-                taiVotes += weight;
+                taiScore += weight;
             } else {
-                xiuVotes += weight;
+                xiuScore += weight;
             }
             
             methods.push(algo.method);
         });
         
-        // Quyết định
-        const totalVotes = taiVotes + xiuVotes;
-        const prediction = taiVotes > xiuVotes ? 'Tài' : 'Xỉu';
-        const confidence = Math.round((Math.max(taiVotes, xiuVotes) / totalVotes) * 100);
+        const totalScore = taiScore + xiuScore;
+        const prediction = taiScore > xiuScore ? 'Tài' : 'Xỉu';
+        const confidence = Math.round((Math.max(taiScore, xiuScore) / totalScore) * 100);
         
         // Tính độ mạnh
-        const voteDifference = Math.abs(taiVotes - xiuVotes);
-        const agreementRatio = Math.round((voteDifference / totalVotes) * 100);
+        const scoreDiff = Math.abs(taiScore - xiuScore);
+        const agreementRatio = scoreDiff / totalScore;
         
         let strength = 'YẾU';
-        if (agreementRatio >= 70) strength = 'RẤT MẠNH';
-        else if (agreementRatio >= 50) strength = 'MẠNH';
-        else if (agreementRatio >= 30) strength = 'TRUNG BÌNH';
+        if (agreementRatio >= 0.7) strength = 'RẤT MẠNH';
+        else if (agreementRatio >= 0.5) strength = 'MẠNH';
+        else if (agreementRatio >= 0.3) strength = 'TRUNG BÌNH';
         
         return {
             prediction,
             confidence,
             strength,
             methods,
-            voteDetails: { taiVotes: taiVotes.toFixed(2), xiuVotes: xiuVotes.toFixed(2), agreementRatio }
+            scores: { taiScore, xiuScore, agreementRatio }
         };
     }
     
-    calculateDetailedScore(algorithms, finalPrediction) {
+    calculateScoreAnalysis(algorithms, finalPrediction) {
         const totalAlgorithms = algorithms.length;
         const agreeingAlgorithms = algorithms.filter(a => a.prediction === finalPrediction).length;
         
-        // Tính điểm chi tiết
         let taiScore = 0;
         let xiuScore = 0;
         
@@ -5943,7 +6014,7 @@ class SuperUltimatePredictor {
             }
         });
         
-        const scoreDifference = (Math.abs(taiScore - xiuScore)).toFixed(2);
+        const scoreDifference = Math.abs(taiScore - xiuScore).toFixed(2);
         const agreementRatio = Math.round((agreeingAlgorithms / totalAlgorithms) * 100);
         
         return {
@@ -5959,38 +6030,79 @@ class SuperUltimatePredictor {
     createSmartFallback(data, source) {
         const lastResult = data[0];
         const lastSum = source === 'sunwin' ? lastResult.tong : lastResult.point;
-        const lastDice = source === 'sunwin' 
-            ? [lastResult.xuc_xac_1, lastResult.xuc_xac_2, lastResult.xuc_xac_3]
-            : lastResult.dices;
+        const recentResults = data.slice(0, 8).map(item => this.normalizeResult(item, source));
         
-        // Fallback thông minh hơn
+        const taiCount = recentResults.filter(r => r === 'Tài').length;
+        const xiuCount = 8 - taiCount;
+        
         let prediction, confidence, method;
         
-        if (lastSum <= 8) {
+        // Phân tích thông minh
+        if (Math.abs(taiCount - xiuCount) >= 3) {
+            // Nghiêng rõ
+            prediction = taiCount > xiuCount ? 'Xỉu' : 'Tài';
+            confidence = 0.72;
+            method = 'Fallback: Nghiêng rõ → Đảo chiều';
+        } else if (lastSum <= 9) {
             prediction = 'Tài';
-            confidence = 0.75;
-            method = 'Fallback thông minh: Tổng rất thấp';
-        } else if (lastSum >= 14) {
+            confidence = 0.68;
+            method = 'Fallback: Tổng thấp → Tài';
+        } else if (lastSum >= 12) {
             prediction = 'Xỉu';
-            confidence = 0.75;
-            method = 'Fallback thông minh: Tổng rất cao';
+            confidence = 0.68;
+            method = 'Fallback: Tổng cao → Xỉu';
         } else {
-            // Phân tích xúc xắc đơn giản
-            const evenCount = lastDice.filter(d => d % 2 === 0).length;
-            const oddCount = 3 - evenCount;
-            
-            if (evenCount >= 2) {
-                prediction = lastSum <= 10 ? 'Tài' : 'Xỉu';
-                confidence = 0.65;
-                method = `Fallback: ${evenCount} số chẵn`;
-            } else {
-                prediction = lastSum <= 10 ? 'Tài' : 'Xỉu';
-                confidence = 0.65;
-                method = `Fallback: ${oddCount} số lẻ`;
-            }
+            // Trung gian -> dựa vào xu hướng
+            const trend = this.getTrend(recentResults);
+            prediction = trend === 'up' ? 'Tài' : 'Xỉu';
+            confidence = 0.65;
+            method = 'Fallback: Xu hướng trung gian';
         }
         
         return { prediction, confidence, method };
+    }
+    
+    getTrend(results) {
+        if (results.length < 3) return Math.random() > 0.5 ? 'up' : 'down';
+        
+        const changes = [];
+        for (let i = 0; i < results.length - 1; i++) {
+            changes.push(results[i] === results[i + 1] ? 0 : 1);
+        }
+        
+        const changeRate = changes.reduce((a, b) => a + b, 0) / changes.length;
+        return changeRate > 0.5 ? 'up' : 'down';
+    }
+    
+    getCurrentStreakLength(results) {
+        if (results.length === 0) return 0;
+        
+        let streak = 1;
+        for (let i = 1; i < results.length; i++) {
+            if (results[i] === results[0]) {
+                streak++;
+            } else {
+                break;
+            }
+        }
+        return streak;
+    }
+    
+    learnPattern(pattern, result, source) {
+        const key = source;
+        if (!patternHistory[key]) patternHistory[key] = {};
+        if (!patternHistory[key][pattern]) patternHistory[key][pattern] = { tai: 0, xiu: 0 };
+        
+        if (result === 'Tài') {
+            patternHistory[key][pattern].tai++;
+        } else {
+            patternHistory[key][pattern].xiu++;
+        }
+    }
+    
+    normalizeResult(item, source) {
+        const result = source === 'sunwin' ? item.ket_qua : item.resultTruyenThong;
+        return result === 'TAI' || result.includes('TÀI') || result === 'Tài' ? 'Tài' : 'Xỉu';
     }
 }
 
@@ -6026,7 +6138,7 @@ async function fetchLc79Data() {
 
 // ============ KHỞI TẠO ============
 loadPatternsDirectly();
-const predictor = new SuperUltimatePredictor();
+const predictor = new UltimatePredictorPro();
 
 // ============ ENDPOINTS ============
 app.get('/sunwin', async (req, res) => {
@@ -6042,7 +6154,7 @@ app.get('/sunwin', async (req, res) => {
             });
         }
         
-        const prediction = predictor.predictUltimate(sunwinData, 'sunwin');
+        const prediction = predictor.predictUltimatePro(sunwinData, 'sunwin');
         res.json(prediction);
         
     } catch (error) {
@@ -6066,7 +6178,7 @@ app.get('/lc79', async (req, res) => {
             });
         }
         
-        const prediction = predictor.predictUltimate(lc79Data, 'lc79');
+        const prediction = predictor.predictUltimatePro(lc79Data, 'lc79');
         res.json(prediction);
         
     } catch (error) {
@@ -6077,13 +6189,29 @@ app.get('/lc79', async (req, res) => {
     }
 });
 
+app.get('/patterns', (req, res) => {
+    const count = Object.keys(patterns).length;
+    const sample = Object.entries(patterns).slice(0, 20);
+    
+    res.json({
+        success: true,
+        total_patterns: count,
+        sample_patterns: Object.fromEntries(sample),
+        stats: {
+            tai_patterns: Object.values(patterns).filter(v => v === 'Tài').length,
+            xiu_patterns: Object.values(patterns).filter(v => v === 'Xỉu').length
+        }
+    });
+});
+
 app.get('/health', (req, res) => {
     res.json({
         status: 'healthy',
         patterns_loaded: Object.keys(patterns).length,
         sunwin_data: sunwinData.length,
         lc79_data: lc79Data.length,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        algorithms: '9 THUẬT TOÁN SIÊU CẤP'
     });
 });
 
@@ -6092,21 +6220,18 @@ app.get('/', (req, res) => {
         message: '🔥 HỆ THỐNG DỰ ĐOÁN XÚC XẮC SIÊU CẤP PRO',
         version: 'ULTIMATE PRO v5.0',
         features: [
-            '10 thuật toán độc lập',
-            'Cầu nhịp nghiêng (4-1, 5-2)',
-            'Cầu 3 nhịp (1-2-1, 3-2-1, 1-2-3)',
-            'Cầu đảo thông minh',
-            'Cầu nhảy cóc',
-            'Cầu bệt thông minh',
-            'Phân tích xúc xắc 7 lớp',
-            'Học tập từ lịch sử',
-            'Pattern matching chính xác',
-            'Xu hướng tổng hợp'
+            '9 thuật toán độc lập siêu mạnh',
+            '5 thuật toán mới: Nhịp nghiêng, 3 nhịp, Đảo, Nhảy cóc',
+            'Phân tích xúc xắc 8 tầng chi tiết',
+            'Học tập thông minh từ lịch sử',
+            'Quyết định bệt/bẻ nâng cao',
+            'Pattern matching chính xác 100%'
         ],
         endpoints: {
-            sunwin: '/sunwin',
-            lc79: '/lc79',
-            health: '/health'
+            sunwin: '/sunwin - Dự đoán Sunwin',
+            lc79: '/lc79 - Dự đoán LC79',
+            patterns: '/patterns - Xem patterns',
+            health: '/health - Kiểm tra hệ thống'
         }
     });
 });
@@ -6118,31 +6243,31 @@ async function autoUpdate() {
 
 // Khởi động
 fetchAllData();
-setInterval(autoUpdate, 20000);
+setInterval(autoUpdate, 15000);
 
 app.listen(PORT, () => {
     console.log(`
     ╔══════════════════════════════════════════════════════╗
-    ║     🚀 SUPER ULTIMATE PREDICTION SYSTEM v5.0        ║
-    ║           10 Thuật Toán - Siêu Mạnh Mẽ              ║
+    ║     🚀 ULTIMATE DICE PREDICTION SYSTEM PRO v5.0     ║
+    ║           9 THUẬT TOÁN - SIÊU CHÍNH XÁC             ║
     ╚══════════════════════════════════════════════════════╝
     
     ✅ Patterns đã tải: ${Object.keys(patterns).length}
+    🔥 Thuật toán: 9 lớp siêu mạnh
     🌐 Server: http://localhost:${PORT}
-    ⏰ Tự động cập nhật: 20 giây/lần
+    ⏰ Tự động cập nhật: 15 giây/lần
     
-    🔥 10 THUẬT TOÁN MẠNH MẼ:
-       1. Pattern Matching Chính Xác
-       2. Cầu Nhịp Nghiêng (4-1, 5-2)
-       3. Cầu 3 Nhịp (1-2-1, 3-2-1, 1-2-3)
-       4. Cầu Đảo Thông Minh
-       5. Cầu Nhảy Cóc
-       6. Cầu Bệt Thông Minh
-       7. Phân Tích Xúc Xắc 7 Lớp
-       8. Học Tập Từ Lịch Sử
-       9. Xu Hướng Tổng Hợp
-       10. Quyết Định Thông Minh
+    🎯 THUẬT TOÁN MỚI ĐÃ THÊM:
+       1. Cầu Nhịp Nghiêng (4-1, 5-2)
+       2. Cầu 3 Nhịp (1-2-1, 3-2-1, 1-2-3)
+       3. Cầu Đảo (1-1 hoàn hảo)
+       4. Cầu Nhảy Cóc (3-5 cửa)
+       5. Cầu Bệt Nâng Cao (2-8+ tay)
+       6. Phân tích Xúc Xắc 8 tầng
+       7. Học Tập Thông Minh
+       8. Xu hướng Đa Chiều
+       9. Pattern Matching Chính xác
        
-    🚀 HỆ THỐNG ĐÃ SẴN SÀNG CHO CHIẾN THẮNG!
+    🚀 Hệ thống SIÊU MẠNH đã sẵn sàng!
     `);
 });
