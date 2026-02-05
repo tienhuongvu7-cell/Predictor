@@ -610,7 +610,7 @@ class UltraPredictionSystem {
     
     // MODEL 5: Cân bằng tỷ lệ chênh lệch
     model5() {
-        const predictions = this.getAllPredictions();
+        const predictions = this.getAllPredictions({ includeMeta: false });
         const tPredictions = Object.values(predictions).filter(p => p && p.prediction === 'Tài').length;
         const xPredictions = Object.values(predictions).filter(p => p && p.prediction === 'Xỉu').length;
         const total = tPredictions + xPredictions;
@@ -1439,7 +1439,7 @@ class UltraPredictionSystem {
     
     // MODEL 21: Cân bằng tổng thể
     model21() {
-        const predictions = this.getAllPredictions();
+        const predictions = this.getAllPredictions({ includeMeta: false });
         const tCount = Object.values(predictions).filter(p => p && p.prediction === 'Tài').length;
         const xCount = Object.values(predictions).filter(p => p && p.prediction === 'Xỉu').length;
         const total = tCount + xCount;
@@ -2124,19 +2124,49 @@ class UltraPredictionSystem {
     getRecentResults(count) {
         return this.history.slice(0, Math.min(count, this.history.length));
     }
-    
-    getAllPredictions() {
+
+    getAllPredictions(options = {}) {
+        // options.includeMeta:
+        //   - true  (default): include meta/aggregate models (e.g. model5/model21) that may depend on other models
+        //   - false: exclude meta models to avoid recursive dependency loops
+        const { includeMeta = true } = options;
+
+        // Re-entrancy / recursion guard: if a model triggers getAllPredictions again in the same call-stack,
+        // return the in-progress cache to avoid "Maximum call stack size exceeded".
+        if (this._predictionsComputing && this._predictionsCache) {
+            return this._predictionsCache;
+        }
+
+        this._predictionsComputing = true;
+
         const predictions = {};
-        
+
+        // Base models: compute without meta models first
         for (let i = 1; i <= 32; i++) {
             const modelName = `model${i}`;
+
+            // Exclude meta models when requested (these are aggregate models and can call getAllPredictions internally)
+            if (!includeMeta && (modelName === 'model5' || modelName === 'model21')) {
+                continue;
+            }
+
             if (this.models[modelName]) {
-                predictions[modelName] = this.models[modelName]();
+                try {
+                    predictions[modelName] = this.models[modelName]();
+                } catch (err) {
+                    // Never crash the whole system because one model fails
+                    predictions[modelName] = null;
+                }
             }
         }
-        
+
+        // Cache (for recursion guard)
+        this._predictionsCache = predictions;
+
+        this._predictionsComputing = false;
         return predictions;
     }
+
     
     addResult(session) {
         this.history.unshift(session);
@@ -2153,7 +2183,7 @@ class UltraPredictionSystem {
     
     updatePerformanceTracking(actualSession) {
         const actualResult = actualSession.isTai ? 'Tài' : 'Xỉu';
-        const predictions = this.getAllPredictions();
+        const predictions = this.getAllPredictions({ includeMeta: false });
         
         for (const [modelName, prediction] of Object.entries(predictions)) {
             if (prediction && prediction.prediction) {
@@ -2446,7 +2476,7 @@ class UltraPredictionSystem {
     }
     
     analyzeModelConsensus() {
-        const predictions = this.getAllPredictions();
+        const predictions = this.getAllPredictions({ includeMeta: false });
         const validPredictions = Object.values(predictions).filter(p => p && p.prediction);
         
         if (validPredictions.length === 0) return { consensus: 'none', rate: 0 };
